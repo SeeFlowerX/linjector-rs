@@ -30,13 +30,13 @@ jobs:
 
       - name: move files
         run: |
-          mv target/aarch64-linux-android/release/linjector-cli ./linjector-cli
+          mv target/aarch64-linux-android/release/liblinjector_rs.a ./liblinjector_rs.a
 
       - name: save hashes in env
         run: |
           echo '```' > hashes.txt
           echo "SHA256 hashes:" >> hashes.txt
-          sha256sum linjector-cli >> hashes.txt
+          sha256sum liblinjector_rs.a >> hashes.txt
           echo '```' >> hashes.txt
 
       - name: release
@@ -45,4 +45,4 @@ jobs:
         with:
           body_path: hashes.txt
           files: |
-            ./linjector-cli
+            ./liblinjector_rs.a

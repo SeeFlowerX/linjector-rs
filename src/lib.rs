@@ -5,6 +5,12 @@ mod shellcode;
 mod utils;
 
 use std::collections::HashMap;
+use std::ffi::CStr;
+use std::os::raw::c_char;
+use log::{error, info, warn, LevelFilter};
+use android_logger::Config;
+use simple_logger::SimpleLogger;
+
 
 #[macro_use]
 extern crate log;
@@ -261,5 +267,137 @@ impl Injector {
 
         info!("injection done.");
         Ok(())
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn inject(
+    pid: i32,
+    file_path: *const c_char,
+    injection_type: i32,
+    func_sym: *const c_char,
+    var_sym: *const c_char,
+    debug: bool,
+    logcat: bool,
+) -> i32 {
+    // 初始化日志
+    if logcat {
+        if debug {
+            android_logger::init_once(Config::default().with_max_level(LevelFilter::Debug));
+        } else {
+            android_logger::init_once(Config::default().with_max_level(LevelFilter::Info));
+        }
+    } else if debug {
+        SimpleLogger::new()
+           .with_level(LevelFilter::Debug)
+           .init()
+           .unwrap();
+    } else {
+        SimpleLogger::new()
+           .with_level(LevelFilter::Info)
+           .init()
+           .unwrap();
+    }
+
+    let file_path = unsafe { CStr::from_ptr(file_path).to_string_lossy().into_owned() };
+    let func_sym_str = if func_sym.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(func_sym).to_string_lossy().into_owned() })
+    };
+    let var_sym_str = if var_sym.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(var_sym).to_string_lossy().into_owned() })
+    };
+
+    info!("target process pid: {}", pid);
+
+    let mut injector = match Injector::new(pid) {
+        Ok(injector) => injector,
+        Err(e) => {
+            error!("Error creating injector: {:?}", e);
+            return -1;
+        }
+    };
+
+    match injector.set_file_path(file_path) {
+        Ok(_) => {}
+        Err(e) => {
+            error!("Error setting file path: {:?}", e);
+            return -1;
+        }
+    }
+
+    // 根据 injection_type 设置注入方式
+    let result = match injection_type {
+        0 => injector.use_raw_dlopen(),       // 使用 RawDlopen
+        1 => injector.use_memfd_dlopen(),    // 使用 MemFdDlopen
+        2 => injector.use_raw_shellcode(),   // 使用 RawShellcode
+        _ => {
+            error!("Invalid injection type: {}", injection_type);
+            return -1;
+        }
+    };
+
+    // 检查注入方式是否设置成功
+    if result.is_err() {
+        error!("Error setting injection type: {:?}", result.err());
+        return -1;
+    }
+
+    // 处理函数符号
+    if let Some(ref func_sym) = func_sym_str {
+        let sym_pair: Vec<&str> = func_sym.split('!').collect();
+        if sym_pair.len() != 2 {
+            error!("Invalid function symbol format, use lib.so!symbol_name");
+            return -1;
+        }
+        match injector.set_func_sym(sym_pair[0], sym_pair[1]) {
+            Ok(_) => {}
+            Err(e) => {
+                error!("Error setting function symbol: {:?}", e);
+                return -1;
+            }
+        };
+    }
+
+    // 处理变量符号
+    if let Some(ref var_sym) = var_sym_str {
+        let sym_pair: Vec<&str> = var_sym.split('!').collect();
+        if sym_pair.len() != 2 {
+            error!("Invalid variable symbol format, use lib.so!symbol_name");
+            return -1;
+        }
+        match injector.set_var_sym(sym_pair[0], sym_pair[1]) {
+            Ok(_) => {}
+            Err(e) => {
+                error!("Error setting variable symbol: {:?}", e);
+                return -1;
+            }
+        };
+    }
+
+    // if either func_sym or var_sym is not provided, use default symbols
+    if func_sym_str.is_none() || var_sym_str.is_none() {
+        warn!("function or variable symbol not specified, using defaults");
+        match injector.set_default_syms() {
+            Ok(_) => {}
+            Err(e) => {
+                error!("Error setting default symbols: {:?}", e);
+                return -1;
+            }
+        };
+    }
+
+    match injector.inject() {
+        Ok(_) => {
+            info!("injection successful");
+            0
+        }
+        Err(e) => {
+            error!("Error injecting: {:?}", e);
+            -1
+        }
     }
 }

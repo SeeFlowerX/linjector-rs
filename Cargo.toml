@@ -6,10 +6,7 @@ edition = "2021"
 [lib]
 name = "linjector_rs"
 path = "src/lib.rs"
-
-[[bin]]
-name = "linjector-cli"
-path = "bin/cli.rs"
+crate-type = ["staticlib"]
 
 [profile.release]
 opt-level = "z"
